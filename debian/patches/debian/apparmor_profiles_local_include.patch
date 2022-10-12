@@ -1,0 +1,59 @@
+From: Felix Geyer <fgeyer@debian.org>
+Date: Tue, 11 Aug 2015 07:25:01 +0200
+Subject: apparmor_profiles_local_include
+
+Include local apparmor profile
+
+Forwarded: not-needed
+---
+ src/security/apparmor/libvirt-lxc                       | 3 +++
+ src/security/apparmor/libvirt-qemu                      | 3 +++
+ src/security/apparmor/usr.lib.libvirt.virt-aa-helper.in | 1 +
+ src/security/apparmor/usr.sbin.libvirtd.in              | 3 +++
+ 4 files changed, 10 insertions(+)
+
+diff --git a/src/security/apparmor/libvirt-lxc b/src/security/apparmor/libvirt-lxc
+index 0c8b812..72278b5 100644
+--- a/src/security/apparmor/libvirt-lxc
++++ b/src/security/apparmor/libvirt-lxc
+@@ -116,3 +116,6 @@
+   deny /sys/fs/cgrou[^p]*{,/**} wklx,
+   deny /sys/fs/cgroup?*{,/**} wklx,
+   deny /sys/fs?*{,/**} wklx,
++
++  # Site-specific additions and overrides. See local/README for details.
++  #include <local/abstractions/libvirt-lxc>
+diff --git a/src/security/apparmor/libvirt-qemu b/src/security/apparmor/libvirt-qemu
+index 250ba4e..1b0d7e3 100644
+--- a/src/security/apparmor/libvirt-qemu
++++ b/src/security/apparmor/libvirt-qemu
+@@ -252,3 +252,6 @@
+   # required for QEMU accessing UEFI nvram variables
+   owner /var/lib/libvirt/qemu/nvram/*_VARS.fd rwk,
+   owner /var/lib/libvirt/qemu/nvram/*_VARS.ms.fd rwk,
++
++  # Site-specific additions and overrides. See local/README for details.
++  #include <local/abstractions/libvirt-qemu>
+diff --git a/src/security/apparmor/usr.lib.libvirt.virt-aa-helper.in b/src/security/apparmor/usr.lib.libvirt.virt-aa-helper.in
+index ff1d46b..5a50823 100644
+--- a/src/security/apparmor/usr.lib.libvirt.virt-aa-helper.in
++++ b/src/security/apparmor/usr.lib.libvirt.virt-aa-helper.in
+@@ -71,5 +71,6 @@ profile virt-aa-helper @libexecdir@/virt-aa-helper {
+   /**.[iI][sS][oO] r,
+   /**/disk{,.*} r,
+ 
++  # Site-specific additions and overrides. See local/README for details.
+   #include <local/usr.lib.libvirt.virt-aa-helper>
+ }
+diff --git a/src/security/apparmor/usr.sbin.libvirtd.in b/src/security/apparmor/usr.sbin.libvirtd.in
+index f2ab6ff..b0d6af8 100644
+--- a/src/security/apparmor/usr.sbin.libvirtd.in
++++ b/src/security/apparmor/usr.sbin.libvirtd.in
+@@ -137,4 +137,7 @@ profile libvirtd @sbindir@/libvirtd flags=(attach_disconnected) {
+ 
+    /usr/{lib,lib64,lib/qemu,libexec}/qemu-bridge-helper rmix,
+   }
++
++  # Site-specific additions and overrides. See local/README for details.
++  #include <local/usr.sbin.libvirtd>
+ }

@@ -1,0 +1,357 @@
+docs_html_dir = docdir / 'html'
+
+# xsltproc requires that the -o path ends with '/'
+# Not using '/' operator due to bug in meson 0.60.0
+# https://github.com/mesonbuild/meson/issues/9450
+docs_builddir = join_paths(meson.current_build_dir(), '')
+
+docs_assets = [
+  'android-chrome-192x192.png',
+  'android-chrome-256x256.png',
+  'apple-touch-icon.png',
+  'browserconfig.xml',
+  'favicon.ico',
+  'favicon-16x16.png',
+  'favicon-32x32.png',
+  'manifest.json',
+  'mstile-150x150.png',
+]
+
+docs_html_in_files = [
+  '404',
+  'bugs',
+  'cgroups',
+  'contact',
+  'contribute',
+  'csharp',
+  'dbus',
+  'devguide',
+  'docs',
+  'downloads',
+  'drivers',
+  'drvbhyve',
+  'drvesx',
+  'drvhyperv',
+  'drvlxc',
+  'drvnodedev',
+  'drvopenvz',
+  'drvremote',
+  'drvsecret',
+  'drvtest',
+  'drvvbox',
+  'drvvirtuozzo',
+  'drvvmware',
+  'drvxen',
+  'errors',
+  'firewall',
+  'formatcaps',
+  'formatdomaincaps',
+  'format',
+  'formatnetwork',
+  'formatnetworkport',
+  'formatnode',
+  'formatnwfilter',
+  'formatsecret',
+  'formatsnapshot',
+  'formatstoragecaps',
+  'formatstorageencryption',
+  'goals',
+  'governance',
+  'hooks',
+  'index',
+  'internals',
+  'java',
+  'logging',
+  'nss',
+  'pci-hotplug',
+  'php',
+  'python',
+  'remote',
+  'securityprocess',
+  'storage',
+  'strategy',
+  'support',
+  'testapi',
+  'testsuites',
+  'testtck',
+  'tlscerts',
+  'uri',
+  'virshcmdref',
+  'windows',
+]
+
+docs_rst_files = [
+  'aclpolkit',
+  'advanced-tests',
+  'api_extension',
+  'api',
+  'apps',
+  'auditlog',
+  'auth',
+  'bindings',
+  'best-practices',
+  'ci',
+  'coding-style',
+  'committer-guidelines',
+  'compiling',
+  'daemons',
+  'developer-tooling',
+  'drvqemu',
+  'drvch',
+  'formatbackup',
+  'formatcheckpoint',
+  'formatdomain',
+  'formatstorage',
+  'glib-adoption',
+  'hacking',
+  'libvirt-go',
+  'libvirt-go-xml',
+  'macos',
+  'migration',
+  'newreposetup',
+  'pci-addresses',
+  'platforms',
+  'programming-languages',
+  'styleguide',
+  'submitting-patches',
+]
+
+# list of web targets to build for docs/web rule
+install_web_deps = []
+install_web_files = []
+
+install_data(docs_assets, install_dir: docs_html_dir)
+
+aclperms_gen = custom_target(
+  'aclperms.htmlinc',
+  input: access_perm_h,
+  output: 'aclperms.htmlinc',
+  command: [
+    meson_python_prog, python3_prog, genaclperms_prog, '@INPUT@',
+  ],
+  capture: true,
+)
+
+docs_timestamp = run_command(
+  python3_prog, meson_timestamp_prog.path(), env: runutf8, check: true,
+).stdout().strip()
+
+site_xsl = files('site.xsl')
+subsite_xsl = files('subsite.xsl')
+page_xsl = files('page.xsl')
+newapi_xsl = files('newapi.xsl')
+
+docs_api_generated = custom_target(
+  'generate-api',
+  output: [
+    'libvirt-api.xml',
+    'libvirt-lxc-api.xml',
+    'libvirt-qemu-api.xml',
+    'libvirt-admin-api.xml',
+  ],
+  command: [
+    meson_python_prog, python3_prog, apibuild_prog,
+    meson.current_source_dir(),
+    meson.current_build_dir(),
+  ],
+  install: true,
+  install_dir: pkgdatadir / 'api',
+  depend_files: [
+    libvirt_common_h_in,
+    libvirt_include,
+    driver_sources,
+    libvirt_qemu_sources,
+    libvirt_lxc_sources,
+    admin_sources,
+    util_public_sources,
+  ],
+)
+
+docs_api_xml = docs_api_generated[0]
+docs_lxc_api_xml = docs_api_generated[1]
+docs_qemu_api_xml = docs_api_generated[2]
+docs_admin_api_xml = docs_api_generated[3]
+
+docs_programs_groups = [
+  { 'name': 'rst2html5', 'prog': [ 'rst2html5', 'rst2html5.py', 'rst2html5-3' ] },
+  { 'name': 'rst2man', 'prog': [ 'rst2man', 'rst2man.py', 'rst2man-3' ] },
+]
+
+foreach item : docs_programs_groups
+  prog = find_program(item.get('prog'), dirs: libvirt_sbin_path)
+  varname = item.get('name').underscorify()
+  conf.set_quoted(varname.to_upper(), prog.path())
+  set_variable('@0@_prog'.format(varname), prog)
+endforeach
+
+# There are two versions of rst2html5 in the wild: one is the version
+# coming from the docutils package, and the other is the one coming
+# from the rst2html5 package. These versions are subtly different,
+# and the libvirt documentation can only be successfully generated
+# using the docutils version. Every now and then, users will report
+# build failures that can be traced back to having the wrong version
+# installed.
+#
+# The only reliable way to tell the two binaries apart seems to be
+# looking look at their version information: the docutils version
+# will report
+#
+#   rst2html5 (Docutils ..., Python ..., on ...)
+#
+# whereas the rst2html5 version will report
+#
+#   rst2html5 ... (Docutils ..., Python ..., on ...)
+#
+# with the additional bit of information being the version number for
+# the rst2html5 package itself.
+#
+# Use this knowledge to detect the version that we know doesn't work
+# for building libvirt and reject it
+rst2html5_version = run_command(rst2html5_prog, '--version', check: true)
+rst2html5_version = rst2html5_version.stdout().split(' ')
+if rst2html5_version[1] != '(Docutils'
+  error('Please uninstall the rst2html5 package and install the docutils package')
+endif
+
+docs_rst2html5_gen = generator(
+  rst2html5_prog,
+  output: '@BASENAME@.html.in',
+  arguments: [ '--stylesheet=', '--strict', '@INPUT@' ],
+  capture: true,
+)
+
+
+# html_xslt_gen config
+
+html_xslt_gen_xslt = site_xsl
+html_xslt_gen_install_dir = docs_html_dir
+
+html_xslt_gen = []
+# html_xslt_gen:
+#   each entry is a dictionary with following items:
+#   name - base file name (required), output file will become 'name.html'
+#   file - input file (optional, 'name.html.in' assumed if missing)
+# source - source filename relative to repository root (optional, if there is no source)
+# depends - explicit dependency on other input (optional)
+
+foreach name : docs_html_in_files
+  html_xslt_gen += {
+    'name': name,
+    'source': 'docs' / name + '.html.in',
+  }
+endforeach
+
+foreach name : docs_rst_files
+  rst_file = '@0@.rst'.format(name)
+  html_xslt_gen += {
+    'name': name,
+    'file': docs_rst2html5_gen.process(rst_file),
+    'source': 'docs' / rst_file,
+  }
+endforeach
+
+html_xslt_gen += {
+  'name': 'acl',
+  'source': 'docs' / 'acl.html.in',
+  'depends': aclperms_gen,
+}
+
+hvsupport_html_in = custom_target(
+  'hvsupport.html.in',
+  output: 'hvsupport.html.in',
+  command: [
+    meson_python_prog,
+    python3_prog,
+    hvsupport_prog,
+    meson.source_root(),
+    meson.build_root(),
+  ],
+  capture: true,
+  depend_files: [
+    public_sym_file,
+    libvirt_qemu_syms,
+    libvirt_lxc_syms,
+    driver_header,
+  ],
+  depends: [
+    docs_api_generated,
+  ],
+)
+html_xslt_gen += {
+  'name': 'hvsupport',
+  'file': hvsupport_html_in,
+}
+
+news_html_in = docs_rst2html5_gen.process(meson.source_root() / 'NEWS.rst')
+html_xslt_gen += {
+  'name': 'news',
+  'file': news_html_in,
+  'source': 'NEWS.rst',
+}
+
+# The following code between the markers must be kept identical with the other
+# copies of the code in various subdirs, since meson doesn't support any kind
+# of functions.
+
+# --- begin of XSLT processing ---
+
+foreach data : html_xslt_gen
+  html_filename = data['name'] + '.html'
+
+  html_file = custom_target(
+    html_filename,
+    input: data.get('file', data['name'] + '.html.in'),
+    output: html_filename,
+    command: [
+      xsltproc_prog,
+      '--stringparam', 'pagesrc', data.get('source', ''),
+      '--stringparam', 'builddir', meson.build_root(),
+      '--stringparam', 'timestamp', docs_timestamp,
+      '--nonet',
+      html_xslt_gen_xslt,
+      '@INPUT@',
+    ],
+    depends: data.get('depends', []),
+    depend_files: [ page_xsl ],
+    capture: true,
+    install: true,
+    install_dir: html_xslt_gen_install_dir,
+  )
+
+  install_web_deps += html_file
+  install_web_files += html_file.full_path() + ':' + html_xslt_gen_install_dir
+endforeach
+
+html_xslt_gen = []
+
+# --- end of XSLT processing ---
+
+subdir('css')
+subdir('fonts')
+subdir('go')
+subdir('html')
+subdir('images')
+subdir('internals')
+subdir('js')
+subdir('kbase')
+subdir('logos')
+subdir('manpages')
+subdir('schemas')
+
+
+foreach file : docs_assets
+  # This hack enables us to view the web pages
+  # from within the uninstalled build tree
+  configure_file(input: file, output: file, copy: true)
+
+  install_web_files += '@0@:@1@'.format(meson.current_source_dir() / file, docs_html_dir)
+endforeach
+
+run_target(
+  'install-web',
+  command: [
+    meson_python_prog, python3_prog.path(), meson_install_web_prog.path(),
+    install_web_files,
+  ],
+  depends: install_web_deps,
+)
