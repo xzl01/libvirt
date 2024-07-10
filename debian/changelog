@@ -1,3 +1,9 @@
+libvirt (10.4.0-1deepin1) unstable; urgency=medium
+
+  * Qemu add libvirt support reuse id
+
+ -- xiangzelong <xiangzelong@deepin.org>  Wed, 10 Jul 2024 17:27:49 +0800
+
 libvirt (10.4.0-1) unstable; urgency=medium
 
   * [7ed6608] New upstream version 10.4.0

@@ -1,0 +1,162 @@
+From 0cb49a30c540f0eb9e0dd5829b9cb9d257890b43 Mon Sep 17 00:00:00 2001
+From: panpingsheng <panpingsheng@hygon.cn>
+Date: Fri, 8 Sep 2023 15:04:44 +0800
+Subject: [PATCH] [newfeature]conf: qemu: add libvirt support reuse id for
+ hygon CSV
+
+csv xml format:
+<launchSecurity type='sev'>
+	<policy>0x0081</policy>
+	<cbitpos>47</cbitpos>
+	<reducedPhysBits>5</reducedPhysBits>
+	<userid>usertest</userid>
+</launchSecurity>
+
+Signed-off-by: panpingsheng <panpingsheng@hygon.cn>
+Signed-off-by: Xin Jiang <jiangxin@hygon.cn>
+Change-Id: I8d417541503bb2f6fabab16595804faef71b2bbf
+---
+ include/libvirt/libvirt-host.h | 9 +++++++++
+ src/conf/domain_capabilities.c | 3 +++
+ src/conf/domain_capabilities.h | 1 +
+ src/conf/domain_conf.c         | 4 ++++
+ src/conf/domain_conf.h         | 1 +
+ src/qemu/qemu_capabilities.c   | 1 +
+ src/qemu/qemu_command.c        | 6 ++++--
+ src/qemu/qemu_driver.c         | 4 ++++
+ 8 files changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/include/libvirt/libvirt-host.h b/include/libvirt/libvirt-host.h
+index 3112f2b..e173553 100644
+--- a/include/libvirt/libvirt-host.h
++++ b/include/libvirt/libvirt-host.h
+@@ -587,6 +587,15 @@ typedef virNodeMemoryStats *virNodeMemoryStatsPtr;
+  */
+ # define VIR_NODE_SEV_MAX_ES_GUESTS "max-es-guests"
+ 
++/**
++ * VIR_NODE_SEV_USER_ID:
++ *
++ * Macro represents the user id string,enable reuse asid feature
++ *
++ * Since: 9.10.0
++ */
++# define VIR_NODE_SEV_USER_ID "user-id"
++
+ int virNodeGetSEVInfo (virConnectPtr conn,
+                        virTypedParameterPtr *params,
+                        int *nparams,
+diff --git a/src/conf/domain_capabilities.c b/src/conf/domain_capabilities.c
+index 2fa5756..28839f6 100644
+--- a/src/conf/domain_capabilities.c
++++ b/src/conf/domain_capabilities.c
+@@ -654,6 +654,9 @@ virDomainCapsFeatureSEVFormat(virBuffer *buf,
+     if (sev->cpu0_id != NULL)
+         virBufferAsprintf(buf, "<cpu0Id>%s</cpu0Id>\n", sev->cpu0_id);
+ 
++    if (sev->user_id != NULL)
++        virBufferAsprintf(buf, "<userid>%s</userid>\n", sev->user_id);
++
+     virBufferAdjustIndent(buf, -2);
+     virBufferAddLit(buf, "</sev>\n");
+ }
+diff --git a/src/conf/domain_capabilities.h b/src/conf/domain_capabilities.h
+index 01bcfa2..20cff85 100644
+--- a/src/conf/domain_capabilities.h
++++ b/src/conf/domain_capabilities.h
+@@ -213,6 +213,7 @@ struct _virSEVCapability {
+     unsigned int reduced_phys_bits;
+     unsigned int max_guests;
+     unsigned int max_es_guests;
++    char *user_id;
+ };
+ 
+ typedef struct _virSGXSection virSGXSection;
+diff --git a/src/conf/domain_conf.c b/src/conf/domain_conf.c
+index 4435ee2..a41ba42 100644
+--- a/src/conf/domain_conf.c
++++ b/src/conf/domain_conf.c
+@@ -13446,6 +13446,7 @@ virDomainSEVDefParseXML(virDomainSEVDef *def,
+ 
+     def->dh_cert = virXPathString("string(./dhCert)", ctxt);
+     def->session = virXPathString("string(./session)", ctxt);
++    def->user_id = virXPathString("string(./userid)", ctxt);
+ 
+     return 0;
+ }
+@@ -26454,6 +26455,9 @@ virDomainSecDefFormat(virBuffer *buf, virDomainSecDef *sec)
+         if (sev->session)
+             virBufferEscapeString(&childBuf, "<session>%s</session>\n", sev->session);
+ 
++        if (sev->user_id)
++            virBufferEscapeString(&childBuf, "<userid>%s</userid>\n", sev->user_id);
++
+         break;
+     }
+ 
+diff --git a/src/conf/domain_conf.h b/src/conf/domain_conf.h
+index 1628978..ce50f17 100644
+--- a/src/conf/domain_conf.h
++++ b/src/conf/domain_conf.h
+@@ -2884,6 +2884,7 @@ struct _virDomainSEVDef {
+     bool haveReducedPhysBits;
+     unsigned int reduced_phys_bits;
+     virTristateBool kernel_hashes;
++    char *user_id;
+ };
+ 
+ struct _virDomainSecDef {
+diff --git a/src/qemu/qemu_capabilities.c b/src/qemu/qemu_capabilities.c
+index 3a1bfbf..cb4efda 100644
+--- a/src/qemu/qemu_capabilities.c
++++ b/src/qemu/qemu_capabilities.c
+@@ -4853,6 +4853,7 @@ virQEMUCapsFormatSEVInfo(virQEMUCaps *qemuCaps, virBuffer *buf)
+     virBufferAsprintf(buf, "<cbitpos>%u</cbitpos>\n", sev->cbitpos);
+     virBufferAsprintf(buf, "<reducedPhysBits>%u</reducedPhysBits>\n",
+                       sev->reduced_phys_bits);
++    virBufferEscapeString(buf, "<userid>%s</userid>\n", sev->user_id);
+     virBufferEscapeString(buf, "<pdh>%s</pdh>\n", sev->pdh);
+     virBufferEscapeString(buf, "<certChain>%s</certChain>\n",
+                           sev->cert_chain);
+diff --git a/src/qemu/qemu_command.c b/src/qemu/qemu_command.c
+index 8a7b807..494e4d0 100644
+--- a/src/qemu/qemu_command.c
++++ b/src/qemu/qemu_command.c
+@@ -9619,8 +9619,9 @@ qemuBuildSEVCommandLine(virDomainObj *vm, virCommand *cmd,
+     g_autofree char *dhpath = NULL;
+     g_autofree char *sessionpath = NULL;
+ 
+-    VIR_DEBUG("policy=0x%x cbitpos=%d reduced_phys_bits=%d",
+-              sev->policy, sev->cbitpos, sev->reduced_phys_bits);
++    VIR_DEBUG("policy=0x%x cbitpos=%d reduced_phys_bits=%d user_id=%s",
++              sev->policy, sev->cbitpos, sev->reduced_phys_bits,
++              sev->user_id ? : "(nil)");
+ 
+     if (sev->dh_cert)
+         dhpath = g_strdup_printf("%s/dh_cert.base64", priv->libDir);
+@@ -9632,6 +9633,7 @@ qemuBuildSEVCommandLine(virDomainObj *vm, virCommand *cmd,
+                                      "u:cbitpos", sev->cbitpos,
+                                      "u:reduced-phys-bits", sev->reduced_phys_bits,
+                                      "u:policy", sev->policy,
++                                     "S:user-id", sev->user_id,
+                                      "S:dh-cert-file", dhpath,
+                                      "S:session-file", sessionpath,
+                                      "T:kernel-hashes", sev->kernel_hashes,
+diff --git a/src/qemu/qemu_driver.c b/src/qemu/qemu_driver.c
+index 056b5ce..018ecd3 100644
+--- a/src/qemu/qemu_driver.c
++++ b/src/qemu/qemu_driver.c
+@@ -18931,6 +18931,10 @@ qemuGetSEVInfoToParams(virQEMUCaps *qemuCaps,
+                               sev->max_es_guests) < 0)
+         goto cleanup;
+ 
++    if (virTypedParamsAddString(&sevParams, &n, &maxpar,
++                    VIR_NODE_SEV_USER_ID, sev->user_id) < 0)
++        goto cleanup;
++
+     *params = g_steal_pointer(&sevParams);
+     *nparams = n;
+     return 0;
+-- 
+2.7.4
+
